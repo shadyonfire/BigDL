@@ -39,7 +39,7 @@ object Train {
         .set("spark.task.maxFailures", "1")
       val sc = new SparkContext(conf)
       Engine.init
-
+      println("starting the program")
       val trainData = param.folder + "/train-images-idx3-ubyte"
       val trainLabel = param.folder + "/train-labels-idx1-ubyte"
       val validationData = param.folder + "/t10k-images-idx3-ubyte"

@@ -1,4 +1,5 @@
 /*
+
  * Copyright 2016 The BigDL Authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -133,6 +134,22 @@ object DistriOptimizer extends AbstractOptimizer {
     var wallClockTime = 0L
     var lastEpochTime = 0L
 
+
+
+
+    //instrumentation variables
+    var inst_times:scala.collection.mutable.Map[String,Long] = scala.collection.mutable.Map();
+    
+    inst_times+=("DataTrainingStartTime" -> 0L);
+    inst_times+=("DataTrainingEndTime" ->  0L);
+    inst_times+=("DataValidationStartTime" -> 0L);
+    inst_times+=("DataValidationEndTime" -> 0L);
+    inst_times+=("DataValidationTime"->0L);
+    inst_times+=("AvgTotalRunTime" -> 0L);
+    inst_times+=("totalBatches"->0L);
+
+    val queryString = inst_times.map(pair => pair._1+"="+pair._2).mkString("?","&","")
+    print(queryString)
     // driverState is needed to prevent serializing the whole optimizer
     optimMethods.values.foreach { optimMethod =>
       if (!optimMethod.state.contains("epoch")) optimMethod.state.update("epoch", 1)
@@ -162,6 +179,7 @@ object DistriOptimizer extends AbstractOptimizer {
     val countBefore = System.nanoTime()
     val numSamples = dataset.data(train = false).map(_.size()).reduce(_ + _)
     val countAfter = System.nanoTime()
+    inst_times+=("DataLoadingTime" -> (countAfter- countBefore));
     logger.info(s"Count dataset complete. Time elapsed: ${(countAfter - countBefore) / 1e9}s")
     if (numSamples != dataset.size()) {
       logger.warn("If the dataset is built directly from RDD[Minibatch], the data in each " +
@@ -177,6 +195,9 @@ object DistriOptimizer extends AbstractOptimizer {
       logger.info("Shuffle data")
       dataset.shuffle()
       val shuffleEnd = System.nanoTime()
+
+      inst_times+=("DataShuffleTime" -> (shuffleEnd-shuffleBefore));
+      
       logger.info(s"Shuffle data complete. Takes ${(shuffleEnd - shuffleBefore) / 1e9}s")
     }
 
@@ -487,6 +508,9 @@ object DistriOptimizer extends AbstractOptimizer {
           }
         }
 
+         
+        val time = System.nanoTime()
+         
         validate(
           validationTrigger,
           validationDataSet,
@@ -498,7 +522,10 @@ object DistriOptimizer extends AbstractOptimizer {
           _header,
           parameters
         )
-
+        inst_times("DataValidationTime")= inst_times("DataValidationTime")+(System.nanoTime()-time);
+        val queryString = inst_times.map(pair => pair._1+"="+pair._2).mkString("?","&","")
+        print(queryString)
+        
         trainSummary.foreach { summary =>
           saveSummary(
             summary,
