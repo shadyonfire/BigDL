@@ -39,6 +39,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.util.AccumulatorV2
 import scala.collection.mutable
 import scala.collection.mutable.ArrayBuffer
+import scala.collection.mutable.ListBuffer
 import scala.concurrent.Future
 import scala.reflect.ClassTag
 
@@ -138,18 +139,16 @@ object DistriOptimizer extends AbstractOptimizer {
 
 
     //instrumentation variables
-    var inst_times:scala.collection.mutable.Map[String,Long] = scala.collection.mutable.Map();
-    
-    inst_times+=("DataTrainingStartTime" -> 0L);
-    inst_times+=("DataTrainingEndTime" ->  0L);
-    inst_times+=("DataValidationStartTime" -> 0L);
-    inst_times+=("DataValidationEndTime" -> 0L);
-    inst_times+=("DataValidationTime"->0L);
-    inst_times+=("AvgTotalRunTime" -> 0L);
-    inst_times+=("totalBatches"->0L);
+    var Inst_times:scala.collection.mutable.Map[String,ListBuffer[Long]] = scala.collection.mutable.Map();
+    Inst_times("dataLoadingTime")=ListBuffer(0L);
+    Inst_times("dataTrainingTime")=ListBuffer(0L);
+    Inst_times("dataShuffleTime")=ListBuffer(0L);
+    Inst_times("GradientTime")=ListBuffer(0L);
+    Inst_times("dataValidationTime")=ListBuffer(0L);
+    Inst_times("weightSyncTime")=ListBuffer(0L);
+  
 
-    val queryString = inst_times.map(pair => pair._1+"="+pair._2).mkString("?","&","")
-    print(queryString)
+
     // driverState is needed to prevent serializing the whole optimizer
     optimMethods.values.foreach { optimMethod =>
       if (!optimMethod.state.contains("epoch")) optimMethod.state.update("epoch", 1)
@@ -179,7 +178,9 @@ object DistriOptimizer extends AbstractOptimizer {
     val countBefore = System.nanoTime()
     val numSamples = dataset.data(train = false).map(_.size()).reduce(_ + _)
     val countAfter = System.nanoTime()
-    inst_times+=("DataLoadingTime" -> (countAfter- countBefore));
+    
+    Inst_times("dataLoadingTime")+= (countAfter-countBefore) 
+    
     logger.info(s"Count dataset complete. Time elapsed: ${(countAfter - countBefore) / 1e9}s")
     if (numSamples != dataset.size()) {
       logger.warn("If the dataset is built directly from RDD[Minibatch], the data in each " +
@@ -196,7 +197,7 @@ object DistriOptimizer extends AbstractOptimizer {
       dataset.shuffle()
       val shuffleEnd = System.nanoTime()
 
-      inst_times+=("DataShuffleTime" -> (shuffleEnd-shuffleBefore));
+    Inst_times("dataShuffleTime")+= (shuffleEnd-shuffleBefore) 
       
       logger.info(s"Shuffle data complete. Takes ${(shuffleEnd - shuffleBefore) / 1e9}s")
     }
@@ -266,9 +267,13 @@ object DistriOptimizer extends AbstractOptimizer {
           Engine.default.sync(tasks)
           weightsResults.waitResult()
           val weightSyncTime = System.nanoTime() - syWStart
+          
           driverMetrics.add("get weights average", weightSyncTime)
           driverMetrics.add("get weights for each node", weightSyncTime)
-          tasks.clear()
+          
+           Inst_times("weightSyncTime")+= weightSyncTime 
+           tasks.clear()
+
 
           // ======================Start train models===================================
           var time = System.nanoTime()
@@ -313,7 +318,11 @@ object DistriOptimizer extends AbstractOptimizer {
           val computingTime = System.nanoTime() - time
           driverMetrics.add("computing time average", computingTime)
           driverMetrics.add("computing time for each node", computingTime)
+          
+          Inst_times("dataTrainingTime")+= computingTime
 
+          Inst_times("dataTrainingTime")+= 123
+          
           val finishedThreads = trainingThreads.filter(!_.isCancelled).map(_.get())
           recordsNum.add(finishedThreads.size * stackSize)
           var i = 0
@@ -522,10 +531,12 @@ object DistriOptimizer extends AbstractOptimizer {
           _header,
           parameters
         )
-        inst_times("DataValidationTime")= inst_times("DataValidationTime")+(System.nanoTime()-time);
-        val queryString = inst_times.map(pair => pair._1+"="+pair._2).mkString("?","&","")
-        print(queryString)
+
         
+        Inst_times("dataValidationTime")+= (System.nanoTime()-time)
+
+
+
         trainSummary.foreach { summary =>
           saveSummary(
             summary,
@@ -554,6 +565,16 @@ object DistriOptimizer extends AbstractOptimizer {
           s"discarded. Only $numFinishedModelUpdates/$driverSubModelNum threads successfully " +
           s"completed training.")
       }
+    }
+
+    println("------------------------");
+    print(Inst_times("dataValidationTime").length)
+    for((key,value) <- Inst_times){
+      println(key);
+      for(time <- Inst_times(key)){
+        println(time);
+      }
+      println("----------------------");
     }
   }
 
