@@ -111,13 +111,13 @@ class Metrics extends Serializable {
   def summary(unit: String = "s", scale: Double = 1e9): String = {
     "========== Metrics Summary ==========\n" +
       localMetricsMap.map(
-        entry => s"${entry._1} : ${entry._2.value.get() / entry._2.parallel / scale} $unit\n")
+        entry => s"${entry._1} : ${entry._2.value.get() / entry._2.parallel / scale}.toLong $unit\n")
         .mkString("") +
       aggregateDistributeMetricsMap.map(
-        entry => s"${entry._1} : ${entry._2.value.value / entry._2.parallel / scale} $unit\n")
+        entry => s"${entry._1} : ${entry._2.value.value / entry._2.parallel / scale}.toLong $unit\n")
         .mkString("") +
       distributeMetricsMap.map { entry =>
-        s"${entry._1} : ${entry._2.value.value.map(_ / scale).mkString(" ")} \n"
+        s"${entry._1} : ${entry._2.value.value.map(_ / scale).mkString(" ")}.toLong \n"
       }.mkString("") +
       "====================================="
   }

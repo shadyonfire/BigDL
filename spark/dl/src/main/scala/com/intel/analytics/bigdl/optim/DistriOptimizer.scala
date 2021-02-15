@@ -132,6 +132,7 @@ object DistriOptimizer extends AbstractOptimizer {
   )(implicit ev: TensorNumeric[T]): Unit = {
     val sc = dataset.originRDD().sparkContext
     val partitionNum = dataset.originRDD().partitions.length
+    println("partitionNum="+partitionNum);
     var wallClockTime = 0L
     var lastEpochTime = 0L
 
@@ -141,12 +142,14 @@ object DistriOptimizer extends AbstractOptimizer {
     //instrumentation variables
     var Inst_times:scala.collection.mutable.Map[String,ListBuffer[Long]] = scala.collection.mutable.Map();
     Inst_times("dataLoadingTime")=ListBuffer(0L);
-    Inst_times("dataTrainingTime")=ListBuffer(0L);
     Inst_times("dataShuffleTime")=ListBuffer(0L);
-    Inst_times("GradientTime")=ListBuffer(0L);
     Inst_times("dataValidationTime")=ListBuffer(0L);
-    Inst_times("weightSyncTime")=ListBuffer(0L);
-  
+    Inst_times("wallClockTime")=ListBuffer(0L);
+    Inst_times("GetWeightTime")=ListBuffer(0L);
+    Inst_times("PutGradientTime")=ListBuffer(0L);
+    Inst_times("AggregateGradTime")=ListBuffer(0L);
+    Inst_times("ComputeTime")=ListBuffer(0L);
+    Inst_times("AggGradPartAvgExecTime")=ListBuffer(0L);
 
 
     // driverState is needed to prevent serializing the whole optimizer
@@ -271,7 +274,6 @@ object DistriOptimizer extends AbstractOptimizer {
           driverMetrics.add("get weights average", weightSyncTime)
           driverMetrics.add("get weights for each node", weightSyncTime)
           
-           Inst_times("weightSyncTime")+= weightSyncTime 
            tasks.clear()
 
 
@@ -312,16 +314,12 @@ object DistriOptimizer extends AbstractOptimizer {
                 }))
               }
               cached.moduleTimeList(i + pre) = System.nanoTime() - trainStart + weightSyncTime
-              i
+            i
             }
           ), timeout)
           val computingTime = System.nanoTime() - time
           driverMetrics.add("computing time average", computingTime)
           driverMetrics.add("computing time for each node", computingTime)
-          
-          Inst_times("dataTrainingTime")+= computingTime
-
-          Inst_times("dataTrainingTime")+= 123
           
           val finishedThreads = trainingThreads.filter(!_.isCancelled).map(_.get())
           recordsNum.add(finishedThreads.size * stackSize)
@@ -360,7 +358,6 @@ object DistriOptimizer extends AbstractOptimizer {
             // all other models' gradient to AllReduceParameter
             parameters.putGradients(finishedGradients(0).narrow(1, pOffset, pLength))
             driverMetrics.add("put gradient", System.nanoTime() - putG)
-
           } else {
             val putG = System.nanoTime()
             // zero gradient in BlockManager when no thread finished.
@@ -380,6 +377,7 @@ object DistriOptimizer extends AbstractOptimizer {
           }
           Iterator.single(finishedThreads.size)
         }
+
         }.reduce(_ + _)
 
       dropModelNumBatch += (driverSubModelNum - numFinishedModelUpdates)
@@ -443,6 +441,7 @@ object DistriOptimizer extends AbstractOptimizer {
         recordsProcessedThisEpoch += (recordsNum.value).toInt
         val end = System.nanoTime()
         wallClockTime += end - start
+        Inst_times("wallClockTime")+=(end-start);
         driverState("isGradientUpdated") = true
         driverState("Loss") = lossSum.value.toFloat / numFinishedModelUpdates
         optimMethods.foreach { v =>
@@ -565,8 +564,15 @@ object DistriOptimizer extends AbstractOptimizer {
           s"discarded. Only $numFinishedModelUpdates/$driverSubModelNum threads successfully " +
           s"completed training.")
       }
-    }
+      
+       // print(driverMetrics.summary("",1));
+      Inst_times("GetWeightTime")+=driverMetrics.get("get weights average")._1.toLong;
+      Inst_times("PutGradientTime")+=driverMetrics.get("put gradient")._1.toLong;
+      Inst_times("AggregateGradTime")+=driverMetrics.get("aggregate gradient time")._1.toLong;
+      Inst_times("ComputeTime")+=driverMetrics.get("computing time average")._1.toLong;
+      Inst_times("AggGradPartAvgExecTime")+=driverMetrics.get("aggregrateGradientParition average executor")._1.toLong;
 
+    }
     println("------------------------");
     print(Inst_times("dataValidationTime").length)
     for((key,value) <- Inst_times){
