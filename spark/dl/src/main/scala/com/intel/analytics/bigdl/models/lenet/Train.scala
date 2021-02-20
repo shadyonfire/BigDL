@@ -76,9 +76,13 @@ object Train {
           learningRateDecay = param.learningRateDecay)
       }
 
+
+      val time= System.nanoTime()
       val trainSet = DataSet.array(load(trainData, trainLabel), sc) ->
         BytesToGreyImg(28, 28) -> GreyImgNormalizer(trainMean, trainStd) -> GreyImgToBatch(
         param.batchSize)
+      println("Time took to load the data");
+      println(System.nanoTime()-time);
 
       val optimizer = Optimizer(
         model = model,
